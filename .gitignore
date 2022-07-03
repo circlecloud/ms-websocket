@@ -1,0 +1,8 @@
+.vscode
+.theia
+node_modules
+.rollup.cache
+!/dist/WebSocket.js
+dist
+package-lock.json
+yarn.lock
