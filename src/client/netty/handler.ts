@@ -1,6 +1,9 @@
 import { NettyWebSocket } from '.'
 import { WebSocketClientHandlerAdapter } from './adapter/handler'
 
+const Throwable = Java.type('java.lang.Throwable')
+const RuntimeException = Java.type('java.lang.RuntimeException')
+
 const CharsetUtil = Java.type('io.netty.util.CharsetUtil')
 const TextWebSocketFrame = Java.type('io.netty.handler.codec.http.websocketx.TextWebSocketFrame')
 const CloseWebSocketFrame = Java.type('io.netty.handler.codec.http.websocketx.CloseWebSocketFrame')
@@ -20,6 +23,7 @@ export class WebSocketClientHandler extends WebSocketClientHandlerAdapter {
         return true
     }
     handlerAdded(ctx: any) {
+        this.client.onconnection({})
         if (ctx.newPromise) {
             this.handshakeFuture = ctx.newPromise()
         } else {
@@ -30,14 +34,15 @@ export class WebSocketClientHandler extends WebSocketClientHandlerAdapter {
         this.handshaker.handshake(ctx.channel())
     }
     channelInactive(ctx: any) {
-        this.client.onclose({ code: 0, reason: 'client connection channel inactive!' })
+        this.client.close(1006, 'connection was closed abnormally.', true)
     }
     channelRead0(ctx: any, msg: any) {
         let ch = ctx.channel()
         if (!this.handshaker.isHandshakeComplete()) {
-            // web socket client connected
+            // websocket client connected
             this.handshaker.finishHandshake(ch, msg)
             this.handshakeFuture.setSuccess()
+            this.client.onconnect({})
             return
         }
 
@@ -50,13 +55,18 @@ export class WebSocketClientHandler extends WebSocketClientHandlerAdapter {
         if (frame instanceof TextWebSocketFrame) {
             this.client.onmessage({ data: frame.text() })
         } else if (frame instanceof CloseWebSocketFrame) {
-            this.client.onclose({ code: 0, reason: 'server close connection!' })
+            this.client.receiverClose(frame.statusCode(), frame.reasonText())
         }
     }
-    exceptionCaught(ctx: any, cause: Error) {
-        this.client.onerror({ error: cause })
-        if (!this.handshakeFuture.isDone()) {
-            this.handshakeFuture.setFailure(cause)
+    abortHandshake(reason: Error) {
+        if (this.handshakeFuture.isDone()) { return }
+        if (!(reason instanceof Throwable)) {
+            reason = new RuntimeException(reason)
         }
+        this.handshakeFuture.setFailure(reason)
+    }
+    exceptionCaught(ctx: any, cause: Error) {
+        this.client.abortHandshake(cause)
+        this.client.onerror({ error: cause })
     }
 }

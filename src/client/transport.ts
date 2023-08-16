@@ -1,12 +1,14 @@
 import { EventEmitter } from '../events'
-import { WebSocket } from './index'
-import { CloseEvent, ErrorEvent, Event, MessageEvent, WebSocketHeader } from './interface'
+import { ClientEvent, CloseEvent, ErrorEvent, Event, MessageEvent, WebSocketHeader } from './interface'
 
 export abstract class Transport extends EventEmitter {
     protected _url: string
     protected _state: number = WebSocket.CONNECTING
     protected _protocol: string
     protected _headers: WebSocketHeader = {}
+
+    protected _closeFrameReceived = false;
+    protected _closeFrameSent = false;
 
     constructor(uri: string, subProtocol: string = '', headers: WebSocketHeader = {}) {
         super()
@@ -23,23 +25,22 @@ export abstract class Transport extends EventEmitter {
         return this._protocol
     }
 
-    get readyStatus() {
+    get readyState() {
         return this._state
     }
 
-    set readyStatus(state: number) {
+    set readyState(state: number) {
         this._state = state
     }
 
     connect() {
-        try {
-            this.doConnect()
-        } catch (error: any) {
-            this.onerror({ error })
-        }
+        this.doConnect()
     }
 
     send(text: string) {
+        if (this.readyState === WebSocket.CONNECTING) {
+            throw new Error('WebSocket is not open: readyState 0 (CONNECTING)');
+        }
         try {
             this.doSend(text)
         } catch (error: any) {
@@ -47,18 +48,21 @@ export abstract class Transport extends EventEmitter {
         }
     }
 
-    close(code: number = 0, reason: string = '') {
-        if (this.readyStatus != WebSocket.CLOSING && this.readyStatus != WebSocket.CLOSED) {
-            this.readyStatus = WebSocket.CLOSING
-            try {
-                this.onclose({ code, reason })
-                this.doClose(code, reason)
-            } catch (error: any) {
-                this.onerror({ error })
-            } finally {
-                this.removeAllListeners()
-            }
-        } else {
+    close(code: number = 1000, reason: string = '', wasClean: boolean = false) {
+        if (this.readyState === WebSocket.CLOSED) return;
+        if (this.readyState === WebSocket.CONNECTING) {
+            const msg = 'WebSocket was closed before the connection was established';
+            this.abortHandshake(new Error(msg));
+            return;
+        }
+        if (code != 1000 && (code < 3000 || code > 4999)) {
+            throw new Error(`The code must be either 1000, or between 3000 and 4999. ${code} is neither.`)
+        }
+        this.readyState = WebSocket.CLOSING
+        try {
+            this.doClose(code, reason, wasClean)
+        } catch (error: any) {
+            this.onerror({ error })
         }
     }
 
@@ -68,31 +72,38 @@ export abstract class Transport extends EventEmitter {
     }
 
     onconnect(event: Event) {
-        if (this.readyStatus != WebSocket.OPEN) {
-            this.readyStatus = WebSocket.OPEN
-            this.emit('open', event)
-        } else {
+        if (this.readyState != WebSocket.OPEN) {
+            this.readyState = WebSocket.OPEN
+            this.emit(ClientEvent.open, event)
         }
     }
 
     onmessage(event: MessageEvent) {
-        this.emit('message', event)
+        this.emit(ClientEvent.message, event)
     }
 
     onerror(event: ErrorEvent) {
-        this.emit('error', event)
+        this.emit(ClientEvent.error, event)
     }
 
     onclose(event: CloseEvent) {
-        if (this.readyStatus != WebSocket.CLOSED) {
-            this.readyStatus = WebSocket.CLOSED
-            this.emit('close', event)
-            this.removeAllListeners()
-        } else {
+        if (this.readyState != WebSocket.CLOSED) {
+            this.readyState = WebSocket.CLOSED
+            this.emit(ClientEvent.close, event)
         }
     }
-    abstract getId()
-    abstract doConnect()
-    abstract doSend(text: string)
-    abstract doClose(code: number, reason: string)
+
+    receiverClose(code: number, reason: string) {
+        // if not set code then set code to 1000
+        if (code === -1) { code = this._closeFrameSent ? 1005 : 1001 }
+        this.readyState = WebSocket.CLOSING
+        this._closeFrameReceived = true;
+        this.doClose(code, reason)
+    }
+
+    abstract getId(): string
+    abstract doConnect(): void
+    abstract doSend(text: string): void
+    abstract doClose(code: number, reason: string, wasClean?: boolean): void
+    abstract abortHandshake(reason: Error): void
 }

@@ -58,6 +58,8 @@ export class NettyWebSocket extends Transport {
     private channel: any
     private b: any
 
+    private handler: any
+
     constructor(url: string, subProtocol: string = '', headers: WebSocketHeader = {}) {
         super(url, subProtocol, headers)
         if (!url) {
@@ -82,10 +84,7 @@ export class NettyWebSocket extends Transport {
         }
     }
     getId() {
-        if (this.channel?.id) {
-            return this.channel?.id() + ''
-        }
-        return 'NettyWebSocket#' + channelCount.incrementAndGet()
+        return `${this.channel?.id()}` || `NettyWebSocket#${channelCount.incrementAndGet()}`
     }
     doConnect() {
         let uri = URI.create(this._url)
@@ -96,7 +95,7 @@ export class NettyWebSocket extends Transport {
         // Connect with V13 (RFC 6455 aka HyBi-17). You can change it to V08 or V00.
         // If you change it to V00, ping is not supported and remember to change
         // HttpResponseDecoder to WebSocketHttpResponseDecoder in the pipeline.
-        let handler = new WebSocketClientHandler(WebSocketClientHandshakerFactory
+        this.handler = new WebSocketClientHandler(WebSocketClientHandshakerFactory
             .newHandshaker(uri, WebSocketVersion.V13, null, false, headers), this)
         this.b = new Bootstrap()
         this.b.group(group)
@@ -107,7 +106,7 @@ export class NettyWebSocket extends Transport {
                     if (this._schema == "wss") {
                         if (SslContextBuilder) {
                             let sslCtx = SslContextBuilder.forClient().trustManager(InsecureTrustManagerFactory.INSTANCE).build()
-                            pipeline.addLast(sslCtx.newHandler(ch.alloc(), this._host, this._port))
+                            pipeline.addLast('ssl', sslCtx.newHandler(ch.alloc(), this._host, this._port))
                         } else {
                             let sslEngine = SSLContext.getDefault().createSSLEngine()
                             sslEngine.setUseClientMode(true)
@@ -116,37 +115,34 @@ export class NettyWebSocket extends Transport {
                     }
                     pipeline.addLast("http-codec", new HttpClientCodec())
                     pipeline.addLast("aggregator", new HttpObjectAggregator(65536))
-                    pipeline.addLast("websocket", handler.getHandler())
+                    pipeline.addLast("websocket", this.handler.getHandler())
                 }
             }))
-        this.b.connect(this._host, this._port).addListener(new ChannelFutureListener((future: any) => {
-            try {
-                this.channel = future.sync().channel()
-                this.onconnection({})
-                handler.handshakeFuture.addListener(new ChannelFutureListener((future: any) => {
-                    try {
-                        future.sync()
-                        // only trigger onconnect when not have error
-                        this.onconnect({})
-                    } catch (error: any) {
-                        error.printStackTrace()
-                        // ignore error exceptionCaught from handler
-                        // this.onerror({ error })
-                    }
-                }))
-            } catch (error: any) {
-                error.printStackTrace()
-                this.onerror({ error })
-            }
-        }))
+        try {
+            this.channel = this.b.connect(this._host, this._port).sync().channel()
+            this.handler.handshakeFuture.sync()
+        } catch (error) {
+            // ignore connect error
+            // tigger error at handshakeFuture
+        }
     }
     doSend(text: string) {
         this.channel.writeAndFlush(new TextWebSocketFrame(text))
     }
-    doClose(code: number, reason: string) {
-        this.channel.writeAndFlush(new CloseWebSocketFrame())
-        this.channel.close()
-        this.channel.closeFuture().addListener(new ChannelFutureListener(() => { }))
+    doClose(code: number, reason: string, wasClean: boolean = false) {
+        if (this.readyState == WebSocket.CLOSING) {
+            if (!this._closeFrameSent) {
+                this.channel?.writeAndFlush(new CloseWebSocketFrame(code, reason))
+                this._closeFrameSent = true
+            }
+            if (!this._closeFrameReceived && !wasClean) { return }
+        }
+        this.channel?.closeFuture().addListener(new ChannelFutureListener(() => {
+            this.onclose({ code, reason })
+        }))
+    }
+    abortHandshake(reason: Error): void {
+        this.handler.abortHandshake(reason)
     }
     getChannel() {
         return this.channel

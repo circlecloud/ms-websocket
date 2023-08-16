@@ -14,17 +14,18 @@
     "main": "dist/WebSocket.js",
     "scripts": {
         "clean": "rimraf dist",
-        "watch": "yarn rollup -c rollup.config.js --watch",
-        "build": "yarn clean && yarn rollup -c rollup.config.js",
+        "watch": "yarn rollup -c rollup.config.js --watch --bundleConfigAsCjs",
+        "build": "yarn clean && yarn rollup -c rollup.config.js --bundleConfigAsCjs",
         "test": "echo \"Error: run tests from root\" && exit 1"
     },
-    "dependencies": {},
     "devDependencies": {
-        "@ccms/nashorn": "^0.20.0",
-        "rimraf": "^3.0.2",
-        "rollup": "^2.72.1",
-        "rollup-obfuscator": "^3.0.1",
-        "rollup-plugin-typescript2": "^0.31.2",
-        "typescript": "^4.6.4"
+        "@ccms/nashorn": "^0.27.6",
+        "@types/node": "^20.3.1",
+        "@rollup/plugin-typescript": "^11.1.2",
+        "rimraf": "^5.0.1",
+        "rollup": "^3.28.0",
+        "rollup-obfuscator": "^3.0.2",
+        "typescript": "^5.1.6",
+        "ws": "^8.13.0"
     }
 }

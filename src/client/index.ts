@@ -1,9 +1,19 @@
 
 import { EventEmitter } from '../events'
 import { Transport } from './transport'
-import { CloseEvent, ErrorEvent, Event, EventType, MessageEvent, WebSocketHeader } from './interface'
+import { ClientEvent, CloseEvent, ErrorEvent, Event, EventType, MessageEvent, WebSocketHeader } from './interface'
 
 import { NettyWebSocket } from './netty'
+import * as exp from 'constants'
+
+declare global {
+    export namespace WebSocket {
+        const CONNECTING: number
+        const OPEN: number
+        const CLOSING: number
+        const CLOSED: number
+    }
+}
 
 export class WebSocket extends EventEmitter {
     public static CONNECTING = 0
@@ -22,15 +32,12 @@ export class WebSocket extends EventEmitter {
         this._url = url
         this._headers = headers
         this.client = new NettyWebSocket(url, subProtocol, headers)
-        this.client.on('open', (event) => {
-            this.onopen?.(event)
-        })
-        this.client.on('message', (event) => this.onmessage?.(event))
-        this.client.on('close', (event) => {
-            this.onclose?.(event)
-        })
-        this.client.on('error', (event) => this.onerror?.(event))
-        setTimeout(() => this.client.connect(), 20)
+        this.client.on(ClientEvent.open, (event) => this.onopen?.(event))
+        this.client.on(ClientEvent.message, (event) => this.onmessage?.(event))
+        this.client.on(ClientEvent.close, (event) => this.onclose?.(event))
+        this.client.on(ClientEvent.error, (event) => this.onerror?.(event))
+        this.on = this.client.on.bind(this.client)
+        this.emit = this.client.emit.bind(this.client)
     }
     connect() {
         this.client.connect()
@@ -48,25 +55,26 @@ export class WebSocket extends EventEmitter {
         return this.client.protocol
     }
     get readyState() {
-        return this.client.readyStatus
+        return this.client.readyState
     }
     get url() {
         return this._url
     }
+
     public onopen: (event: Event) => void
     public onmessage: (event: MessageEvent) => void
     public onclose: (event: CloseEvent) => void
     public onerror: (event: ErrorEvent) => void
 
-    addEventListener(event: EventType, callback: () => void) {
-        this[`on${event.toLowerCase()}`] = callback
-        this.client.on(event, callback)
-    }
     public send(data: any) {
-        this.client.send(data)
+        return this.client.send(data)
     }
+
     public close(code?: number, reason?: string) {
-        this.client.close(code, reason)
-        this.removeAllListeners()
+        return this.client.close(code, reason)
     }
+}
+
+if (global && !global.WebSocket) {
+    global.WebSocket = WebSocket
 }

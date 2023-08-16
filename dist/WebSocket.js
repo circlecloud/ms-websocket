@@ -1,7 +1,5 @@
 'use strict';
 
-Object.defineProperty(exports, '__esModule', { value: true });
-
 /******************************************************************************
 Copyright (c) Microsoft Corporation.
 
@@ -67,6 +65,51 @@ function __param(paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 }
 
+function __esDecorate(ctor, descriptorIn, decorators, contextIn, initializers, extraInitializers) {
+    function accept(f) { if (f !== void 0 && typeof f !== "function") throw new TypeError("Function expected"); return f; }
+    var kind = contextIn.kind, key = kind === "getter" ? "get" : kind === "setter" ? "set" : "value";
+    var target = !descriptorIn && ctor ? contextIn["static"] ? ctor : ctor.prototype : null;
+    var descriptor = descriptorIn || (target ? Object.getOwnPropertyDescriptor(target, contextIn.name) : {});
+    var _, done = false;
+    for (var i = decorators.length - 1; i >= 0; i--) {
+        var context = {};
+        for (var p in contextIn) context[p] = p === "access" ? {} : contextIn[p];
+        for (var p in contextIn.access) context.access[p] = contextIn.access[p];
+        context.addInitializer = function (f) { if (done) throw new TypeError("Cannot add initializers after decoration has completed"); extraInitializers.push(accept(f || null)); };
+        var result = (0, decorators[i])(kind === "accessor" ? { get: descriptor.get, set: descriptor.set } : descriptor[key], context);
+        if (kind === "accessor") {
+            if (result === void 0) continue;
+            if (result === null || typeof result !== "object") throw new TypeError("Object expected");
+            if (_ = accept(result.get)) descriptor.get = _;
+            if (_ = accept(result.set)) descriptor.set = _;
+            if (_ = accept(result.init)) initializers.push(_);
+        }
+        else if (_ = accept(result)) {
+            if (kind === "field") initializers.push(_);
+            else descriptor[key] = _;
+        }
+    }
+    if (target) Object.defineProperty(target, contextIn.name, descriptor);
+    done = true;
+};
+
+function __runInitializers(thisArg, initializers, value) {
+    var useValue = arguments.length > 2;
+    for (var i = 0; i < initializers.length; i++) {
+        value = useValue ? initializers[i].call(thisArg, value) : initializers[i].call(thisArg);
+    }
+    return useValue ? value : void 0;
+};
+
+function __propKey(x) {
+    return typeof x === "symbol" ? x : "".concat(x);
+};
+
+function __setFunctionName(f, name, prefix) {
+    if (typeof name === "symbol") name = name.description ? "[".concat(name.description, "]") : "";
+    return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
+};
+
 function __metadata(metadataKey, metadataValue) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(metadataKey, metadataValue);
 }
@@ -87,7 +130,7 @@ function __generator(thisArg, body) {
     function verb(n) { return function (v) { return step([n, v]); }; }
     function step(op) {
         if (f) throw new TypeError("Generator is already executing.");
-        while (_) try {
+        while (g && (g = 0, op[0] && (_ = 0)), _) try {
             if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
             if (y = 0, t) op = [op[0] & 2, t.value];
             switch (op[0]) {
@@ -199,7 +242,7 @@ function __asyncGenerator(thisArg, _arguments, generator) {
 function __asyncDelegator(o) {
     var i, p;
     return i = {}, verb("next"), verb("throw", function (e) { throw e; }), verb("return"), i[Symbol.iterator] = function () { return this; }, i;
-    function verb(n, f) { i[n] = o[n] ? function (v) { return (p = !p) ? { value: __await(o[n](v)), done: n === "return" } : f ? f(v) : v; } : f; }
+    function verb(n, f) { i[n] = o[n] ? function (v) { return (p = !p) ? { value: __await(o[n](v)), done: false } : f ? f(v) : v; } : f; }
 }
 
 function __asyncValues(o) {
@@ -643,6 +686,14 @@ function unwrapListeners(arr) {
     return ret;
 }
 
+var ClientEvent;
+(function (ClientEvent) {
+    ClientEvent["open"] = "open";
+    ClientEvent["message"] = "message";
+    ClientEvent["close"] = "close";
+    ClientEvent["error"] = "error";
+})(ClientEvent || (ClientEvent = {}));
+
 var Transport = /** @class */ (function (_super) {
     __extends(Transport, _super);
     function Transport(uri, subProtocol, headers) {
@@ -651,6 +702,8 @@ var Transport = /** @class */ (function (_super) {
         var _this = _super.call(this) || this;
         _this._state = WebSocket.CONNECTING;
         _this._headers = {};
+        _this._closeFrameReceived = false;
+        _this._closeFrameSent = false;
         _this._url = uri;
         _this._protocol = subProtocol;
         _this._headers = headers;
@@ -670,7 +723,7 @@ var Transport = /** @class */ (function (_super) {
         enumerable: false,
         configurable: true
     });
-    Object.defineProperty(Transport.prototype, "readyStatus", {
+    Object.defineProperty(Transport.prototype, "readyState", {
         get: function () {
             return this._state;
         },
@@ -681,14 +734,12 @@ var Transport = /** @class */ (function (_super) {
         configurable: true
     });
     Transport.prototype.connect = function () {
-        try {
-            this.doConnect();
-        }
-        catch (error) {
-            this.onerror({ error: error });
-        }
+        this.doConnect();
     };
     Transport.prototype.send = function (text) {
+        if (this.readyState === WebSocket.CONNECTING) {
+            throw new Error('WebSocket is not open: readyState 0 (CONNECTING)');
+        }
         try {
             this.doSend(text);
         }
@@ -696,23 +747,26 @@ var Transport = /** @class */ (function (_super) {
             this.onerror({ error: error });
         }
     };
-    Transport.prototype.close = function (code, reason) {
-        if (code === void 0) { code = 0; }
+    Transport.prototype.close = function (code, reason, wasClean) {
+        if (code === void 0) { code = 1000; }
         if (reason === void 0) { reason = ''; }
-        if (this.readyStatus != WebSocket.CLOSING && this.readyStatus != WebSocket.CLOSED) {
-            this.readyStatus = WebSocket.CLOSING;
-            try {
-                this.onclose({ code: code, reason: reason });
-                this.doClose(code, reason);
-            }
-            catch (error) {
-                this.onerror({ error: error });
-            }
-            finally {
-                this.removeAllListeners();
-            }
+        if (wasClean === void 0) { wasClean = false; }
+        if (this.readyState === WebSocket.CLOSED)
+            return;
+        if (this.readyState === WebSocket.CONNECTING) {
+            var msg = 'WebSocket was closed before the connection was established';
+            this.abortHandshake(new Error(msg));
+            return;
         }
-        else {
+        if (code != 1000 && (code < 3000 || code > 4999)) {
+            throw new Error("The code must be either 1000, or between 3000 and 4999. ".concat(code, " is neither."));
+        }
+        this.readyState = WebSocket.CLOSING;
+        try {
+            this.doClose(code, reason, wasClean);
+        }
+        catch (error) {
+            this.onerror({ error: error });
         }
     };
     Transport.prototype.onconnection = function (event) {
@@ -720,27 +774,31 @@ var Transport = /** @class */ (function (_super) {
         this.emit('connecting', event);
     };
     Transport.prototype.onconnect = function (event) {
-        if (this.readyStatus != WebSocket.OPEN) {
-            this.readyStatus = WebSocket.OPEN;
-            this.emit('open', event);
-        }
-        else {
+        if (this.readyState != WebSocket.OPEN) {
+            this.readyState = WebSocket.OPEN;
+            this.emit(ClientEvent.open, event);
         }
     };
     Transport.prototype.onmessage = function (event) {
-        this.emit('message', event);
+        this.emit(ClientEvent.message, event);
     };
     Transport.prototype.onerror = function (event) {
-        this.emit('error', event);
+        this.emit(ClientEvent.error, event);
     };
     Transport.prototype.onclose = function (event) {
-        if (this.readyStatus != WebSocket.CLOSED) {
-            this.readyStatus = WebSocket.CLOSED;
-            this.emit('close', event);
-            this.removeAllListeners();
+        if (this.readyState != WebSocket.CLOSED) {
+            this.readyState = WebSocket.CLOSED;
+            this.emit(ClientEvent.close, event);
         }
-        else {
+    };
+    Transport.prototype.receiverClose = function (code, reason) {
+        // if not set code then set code to 1000
+        if (code === -1) {
+            code = this._closeFrameSent ? 1005 : 1001;
         }
+        this.readyState = WebSocket.CLOSING;
+        this._closeFrameReceived = true;
+        this.doClose(code, reason);
     };
     return Transport;
 }(EventEmitter));
@@ -764,6 +822,8 @@ var WebSocketClientHandlerAdapter = /** @class */ (function () {
     return WebSocketClientHandlerAdapter;
 }());
 
+var Throwable = Java.type('java.lang.Throwable');
+var RuntimeException = Java.type('java.lang.RuntimeException');
 var CharsetUtil = Java.type('io.netty.util.CharsetUtil');
 var TextWebSocketFrame$1 = Java.type('io.netty.handler.codec.http.websocketx.TextWebSocketFrame');
 var CloseWebSocketFrame$1 = Java.type('io.netty.handler.codec.http.websocketx.CloseWebSocketFrame');
@@ -781,6 +841,7 @@ var WebSocketClientHandler = /** @class */ (function (_super) {
         return true;
     };
     WebSocketClientHandler.prototype.handlerAdded = function (ctx) {
+        this.client.onconnection({});
         if (ctx.newPromise) {
             this.handshakeFuture = ctx.newPromise();
         }
@@ -792,14 +853,15 @@ var WebSocketClientHandler = /** @class */ (function (_super) {
         this.handshaker.handshake(ctx.channel());
     };
     WebSocketClientHandler.prototype.channelInactive = function (ctx) {
-        this.client.onclose({ code: 0, reason: 'client connection channel inactive!' });
+        this.client.close(1006, 'connection was closed abnormally.', true);
     };
     WebSocketClientHandler.prototype.channelRead0 = function (ctx, msg) {
         var ch = ctx.channel();
         if (!this.handshaker.isHandshakeComplete()) {
-            // web socket client connected
+            // websocket client connected
             this.handshaker.finishHandshake(ch, msg);
             this.handshakeFuture.setSuccess();
+            this.client.onconnect({});
             return;
         }
         if (msg instanceof FullHttpResponse) {
@@ -811,14 +873,21 @@ var WebSocketClientHandler = /** @class */ (function (_super) {
             this.client.onmessage({ data: frame.text() });
         }
         else if (frame instanceof CloseWebSocketFrame$1) {
-            this.client.onclose({ code: 0, reason: 'server close connection!' });
+            this.client.receiverClose(frame.statusCode(), frame.reasonText());
         }
     };
-    WebSocketClientHandler.prototype.exceptionCaught = function (ctx, cause) {
-        this.client.onerror({ error: cause });
-        if (!this.handshakeFuture.isDone()) {
-            this.handshakeFuture.setFailure(cause);
+    WebSocketClientHandler.prototype.abortHandshake = function (reason) {
+        if (this.handshakeFuture.isDone()) {
+            return;
         }
+        if (!(reason instanceof Throwable)) {
+            reason = new RuntimeException(reason);
+        }
+        this.handshakeFuture.setFailure(reason);
+    };
+    WebSocketClientHandler.prototype.exceptionCaught = function (ctx, cause) {
+        this.client.abortHandshake(cause);
+        this.client.onerror({ error: cause });
     };
     return WebSocketClientHandler;
 }(WebSocketClientHandlerAdapter));
@@ -896,11 +965,8 @@ var NettyWebSocket = /** @class */ (function (_super) {
         return _this;
     }
     NettyWebSocket.prototype.getId = function () {
-        var _a, _b;
-        if ((_a = this.channel) === null || _a === void 0 ? void 0 : _a.id) {
-            return ((_b = this.channel) === null || _b === void 0 ? void 0 : _b.id()) + '';
-        }
-        return 'NettyWebSocket#' + channelCount.incrementAndGet();
+        var _a;
+        return "".concat((_a = this.channel) === null || _a === void 0 ? void 0 : _a.id()) || "NettyWebSocket#".concat(channelCount.incrementAndGet());
     };
     NettyWebSocket.prototype.doConnect = function () {
         var e_1, _a;
@@ -923,7 +989,7 @@ var NettyWebSocket = /** @class */ (function (_super) {
         // Connect with V13 (RFC 6455 aka HyBi-17). You can change it to V08 or V00.
         // If you change it to V00, ping is not supported and remember to change
         // HttpResponseDecoder to WebSocketHttpResponseDecoder in the pipeline.
-        var handler = new WebSocketClientHandler(WebSocketClientHandshakerFactory
+        this.handler = new WebSocketClientHandler(WebSocketClientHandshakerFactory
             .newHandshaker(uri, WebSocketVersion.V13, null, false, headers), this);
         this.b = new Bootstrap();
         this.b.group(group)
@@ -934,7 +1000,7 @@ var NettyWebSocket = /** @class */ (function (_super) {
                 if (_this._schema == "wss") {
                     if (SslContextBuilder) {
                         var sslCtx = SslContextBuilder.forClient().trustManager(InsecureTrustManagerFactory.INSTANCE).build();
-                        pipeline.addLast(sslCtx.newHandler(ch.alloc(), _this._host, _this._port));
+                        pipeline.addLast('ssl', sslCtx.newHandler(ch.alloc(), _this._host, _this._port));
                     }
                     else {
                         var sslEngine = SSLContext.getDefault().createSSLEngine();
@@ -944,39 +1010,40 @@ var NettyWebSocket = /** @class */ (function (_super) {
                 }
                 pipeline.addLast("http-codec", new HttpClientCodec());
                 pipeline.addLast("aggregator", new HttpObjectAggregator(65536));
-                pipeline.addLast("websocket", handler.getHandler());
+                pipeline.addLast("websocket", _this.handler.getHandler());
             }
         }));
-        this.b.connect(this._host, this._port).addListener(new ChannelFutureListener(function (future) {
-            try {
-                _this.channel = future.sync().channel();
-                _this.onconnection({});
-                handler.handshakeFuture.addListener(new ChannelFutureListener(function (future) {
-                    try {
-                        future.sync();
-                        // only trigger onconnect when not have error
-                        _this.onconnect({});
-                    }
-                    catch (error) {
-                        error.printStackTrace();
-                        // ignore error exceptionCaught from handler
-                        // this.onerror({ error })
-                    }
-                }));
-            }
-            catch (error) {
-                error.printStackTrace();
-                _this.onerror({ error: error });
-            }
-        }));
+        try {
+            this.channel = this.b.connect(this._host, this._port).sync().channel();
+            this.handler.handshakeFuture.sync();
+        }
+        catch (error) {
+            // ignore connect error
+            // tigger error at handshakeFuture
+        }
     };
     NettyWebSocket.prototype.doSend = function (text) {
         this.channel.writeAndFlush(new TextWebSocketFrame(text));
     };
-    NettyWebSocket.prototype.doClose = function (code, reason) {
-        this.channel.writeAndFlush(new CloseWebSocketFrame());
-        this.channel.close();
-        this.channel.closeFuture().addListener(new ChannelFutureListener(function () { }));
+    NettyWebSocket.prototype.doClose = function (code, reason, wasClean) {
+        var _this = this;
+        var _a, _b;
+        if (wasClean === void 0) { wasClean = false; }
+        if (this.readyState == WebSocket.CLOSING) {
+            if (!this._closeFrameSent) {
+                (_a = this.channel) === null || _a === void 0 ? void 0 : _a.writeAndFlush(new CloseWebSocketFrame(code, reason));
+                this._closeFrameSent = true;
+            }
+            if (!this._closeFrameReceived && !wasClean) {
+                return;
+            }
+        }
+        (_b = this.channel) === null || _b === void 0 ? void 0 : _b.closeFuture().addListener(new ChannelFutureListener(function () {
+            _this.onclose({ code: code, reason: reason });
+        }));
+    };
+    NettyWebSocket.prototype.abortHandshake = function (reason) {
+        this.handler.abortHandshake(reason);
     };
     NettyWebSocket.prototype.getChannel = function () {
         return this.channel;
@@ -984,7 +1051,7 @@ var NettyWebSocket = /** @class */ (function (_super) {
     return NettyWebSocket;
 }(Transport));
 
-var WebSocket = /** @class */ (function (_super) {
+var WebSocket$1 = /** @class */ (function (_super) {
     __extends(WebSocket, _super);
     function WebSocket(url, subProtocol, headers) {
         if (subProtocol === void 0) { subProtocol = ''; }
@@ -994,17 +1061,12 @@ var WebSocket = /** @class */ (function (_super) {
         _this._url = url;
         _this._headers = headers;
         _this.client = new NettyWebSocket(url, subProtocol, headers);
-        _this.client.on('open', function (event) {
-            var _a;
-            (_a = _this.onopen) === null || _a === void 0 ? void 0 : _a.call(_this, event);
-        });
-        _this.client.on('message', function (event) { var _a; return (_a = _this.onmessage) === null || _a === void 0 ? void 0 : _a.call(_this, event); });
-        _this.client.on('close', function (event) {
-            var _a;
-            (_a = _this.onclose) === null || _a === void 0 ? void 0 : _a.call(_this, event);
-        });
-        _this.client.on('error', function (event) { var _a; return (_a = _this.onerror) === null || _a === void 0 ? void 0 : _a.call(_this, event); });
-        setTimeout(function () { return _this.client.connect(); }, 20);
+        _this.client.on(ClientEvent.open, function (event) { var _a; return (_a = _this.onopen) === null || _a === void 0 ? void 0 : _a.call(_this, event); });
+        _this.client.on(ClientEvent.message, function (event) { var _a; return (_a = _this.onmessage) === null || _a === void 0 ? void 0 : _a.call(_this, event); });
+        _this.client.on(ClientEvent.close, function (event) { var _a; return (_a = _this.onclose) === null || _a === void 0 ? void 0 : _a.call(_this, event); });
+        _this.client.on(ClientEvent.error, function (event) { var _a; return (_a = _this.onerror) === null || _a === void 0 ? void 0 : _a.call(_this, event); });
+        _this.on = _this.client.on.bind(_this.client);
+        _this.emit = _this.client.emit.bind(_this.client);
         return _this;
     }
     WebSocket.prototype.connect = function () {
@@ -1040,7 +1102,7 @@ var WebSocket = /** @class */ (function (_super) {
     });
     Object.defineProperty(WebSocket.prototype, "readyState", {
         get: function () {
-            return this.client.readyStatus;
+            return this.client.readyState;
         },
         enumerable: false,
         configurable: true
@@ -1052,16 +1114,11 @@ var WebSocket = /** @class */ (function (_super) {
         enumerable: false,
         configurable: true
     });
-    WebSocket.prototype.addEventListener = function (event, callback) {
-        this["on".concat(event.toLowerCase())] = callback;
-        this.client.on(event, callback);
-    };
     WebSocket.prototype.send = function (data) {
-        this.client.send(data);
+        return this.client.send(data);
     };
     WebSocket.prototype.close = function (code, reason) {
-        this.client.close(code, reason);
-        this.removeAllListeners();
+        return this.client.close(code, reason);
     };
     WebSocket.CONNECTING = 0;
     WebSocket.OPEN = 1;
@@ -1069,8 +1126,11 @@ var WebSocket = /** @class */ (function (_super) {
     WebSocket.CLOSED = 3;
     return WebSocket;
 }(EventEmitter));
+if (global && !global.WebSocket) {
+    global.WebSocket = WebSocket$1;
+}
 
 /// <reference types="@ccms/nashorn" />
 
-exports.WebSocket = WebSocket;
+exports.WebSocket = WebSocket$1;
 //# sourceMappingURL=WebSocket.js.map
